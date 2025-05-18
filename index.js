@@ -14,7 +14,9 @@ let qrCodeData = null;
 
 // Initialize WhatsApp client
 const client = new Client({
-  authStrategy: new LocalAuth(),
+  authStrategy: new LocalAuth({
+    dataPath: '/tmp/whatsapp-auth', // Use /tmp for Railway's ephemeral storage
+  }),
   puppeteer: {
     args: [
       '--no-sandbox',
@@ -38,6 +40,7 @@ const activeOTPs = new Map();
 
 // Track client state
 let clientReady = false;
+let restartTimeout;
 
 // Generate a random 6-digit OTP
 function generateOTP() {
@@ -61,6 +64,9 @@ client.on('ready', () => {
   qrCodeData = null; // Clear QR data when client is ready
   clientReady = true;
   console.log('WhatsApp client is ready!');
+  
+  // Schedule the next restart
+  scheduleRestart();
 });
 
 client.on('message', async (message) => {
@@ -100,6 +106,40 @@ client.on('disconnected', async (reason) => {
 
 // Initialize the WhatsApp client
 client.initialize();
+
+// Add a periodic restart mechanism to prevent session issues
+function scheduleRestart() {
+  // Clear any existing restart timer
+  if (restartTimeout) {
+    clearTimeout(restartTimeout);
+  }
+  
+  // Schedule restart every 6 hours
+  restartTimeout = setTimeout(async () => {
+    console.log('Performing scheduled WhatsApp client restart...');
+    
+    try {
+      // Set client as not ready during restart
+      clientReady = false;
+      
+      // Try to properly destroy the client if possible
+      await client.destroy().catch(err => console.log('Error during destroy:', err));
+      
+      // Small delay before reinitializing
+      setTimeout(() => {
+        console.log('Reinitializing WhatsApp client...');
+        client.initialize();
+      }, 5000);
+    } catch (error) {
+      console.error('Error during scheduled restart:', error);
+      // Try to initialize anyway
+      client.initialize();
+    }
+  }, 6 * 60 * 60 * 1000); // 6 hours
+}
+
+// Call this after client initialization
+scheduleRestart();
 
 // API endpoints
 app.get('/', (req, res) => {
@@ -181,14 +221,6 @@ app.post('/send-otp', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Phone number is required' });
     }
     
-    // Check if client is ready
-    if (!clientReady) {
-      return res.status(503).json({ 
-        success: false, 
-        message: 'WhatsApp service is not connected. Please check /status endpoint and try again later.' 
-      });
-    }
-    
     // Format phone number to WhatsApp format (with @c.us suffix)
     const formattedNumber = phoneNumber.includes('@c.us') 
       ? phoneNumber 
@@ -206,27 +238,79 @@ app.post('/send-otp', async (req, res) => {
       expiry: expiryTime,
       callbackUrl
     });
+
+    // Maximum retry attempts
+    const MAX_RETRIES = 2;
+    let retries = 0;
+    let success = false;
     
-    try {
-      // Send OTP via WhatsApp with retry logic
-      await client.sendMessage(formattedNumber, 
-        `Your verification code is: *${otp}*\n\nValid for 5 minutes. Do not share this code with anyone.`);
-    } catch (sendError) {
-      console.error('Send message error:', sendError);
-      
-      // If we get a session error, mark client as not ready
-      if (sendError.message.includes('Session closed')) {
-        clientReady = false;
-        client.initialize(); // Try to reconnect
+    while (retries <= MAX_RETRIES && !success) {
+      try {
+        // Check if client is ready
+        if (!clientReady) {
+          console.log(`Client not ready (attempt ${retries + 1}/${MAX_RETRIES + 1}), waiting...`);
+          
+          if (retries === MAX_RETRIES) {
+            return res.status(503).json({ 
+              success: false, 
+              message: 'WhatsApp service is not connected after multiple attempts. Please try again later.' 
+            });
+          }
+
+          // Force restart client
+          try {
+            await client.destroy().catch(() => {});
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            client.initialize();
+            await new Promise(resolve => setTimeout(resolve, 5000)); // Wait for client to initialize
+          } catch (err) {
+            console.error('Error during client restart:', err);
+          }
+          
+          retries++;
+          continue;
+        }
         
-        return res.status(503).json({
-          success: false,
-          message: 'WhatsApp service temporarily unavailable. Please try again in a few minutes.',
-          error: 'Session error'
-        });
+        // Send OTP via WhatsApp
+        await client.sendMessage(formattedNumber, 
+          `Your verification code is: *${otp}*\n\nValid for 5 minutes. Do not share this code with anyone.`);
+          
+        // If we get here, message was sent successfully
+        success = true;
+        
+      } catch (sendError) {
+        console.error(`Send message error (attempt ${retries + 1}/${MAX_RETRIES + 1}):`, sendError);
+        
+        // If last retry failed, send error response
+        if (retries === MAX_RETRIES) {
+          // Clean up the OTP since we couldn't send it
+          activeOTPs.delete(formattedNumber);
+          
+          return res.status(503).json({
+            success: false,
+            message: 'Failed to send WhatsApp message after multiple attempts',
+            error: sendError.message
+          });
+        }
+        
+        // Mark client as not ready if we got a session error
+        if (sendError.message.includes('Session closed') || sendError.message.includes('Protocol error')) {
+          clientReady = false;
+          
+          // Force restart client
+          try {
+            await client.destroy().catch(() => {});
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            client.initialize();
+            await new Promise(resolve => setTimeout(resolve, 5000)); // Wait for client to initialize
+          } catch (err) {
+            console.error('Error during client restart:', err);
+          }
+        }
+        
+        retries++;
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait before retrying
       }
-      
-      throw sendError; // Re-throw for the outer catch block
     }
     
     // Set up expiration for this OTP

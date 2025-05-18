@@ -68,7 +68,7 @@ OTPs can be verified in two ways:
 }
 ```
 
-## Deploying to Railway
+## Deployment on Railway
 
 1. Create a Railway account at [railway.app](https://railway.app)
 
@@ -92,7 +92,23 @@ railway init
 railway up
 ```
 
-6. Set up environment variables in the Railway dashboard if needed
+6. After deployment, visit your deployed application's URL (e.g., https://your-app-name.railway.app) to see the QR code in the browser.
+
+7. You can also access the QR code directly at the `/qr` endpoint: `https://your-app-name.railway.app/qr`
+
+8. Scan the QR code with your WhatsApp app to authenticate.
+
+9. After scanning, refresh the page to confirm authentication was successful.
+
+### Troubleshooting Railway Deployment
+
+If you encounter QR code issues in Railway:
+
+1. **Can't see the QR code in logs**: The QR code in Railway's logs is often unreadable. Use the web interface instead by visiting your app's URL.
+
+2. **Authentication not persisting**: Railway might not persist the WhatsApp session between deployments. You may need to re-authenticate after redeployments.
+
+3. **Session storage issues**: To improve persistence, consider using a database or storage service instead of local auth storage.
 
 ## API Endpoints
 

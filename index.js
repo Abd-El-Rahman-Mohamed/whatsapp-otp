@@ -1,12 +1,16 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, RemoteAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const express = require('express');
 const crypto = require('crypto');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// QR Code storage
+let qrCodeData = null;
 
 // Initialize WhatsApp client
 const client = new Client({
@@ -37,11 +41,18 @@ function generateOTP() {
 // WhatsApp client events
 client.on('qr', (qr) => {
   console.log('QR RECEIVED:');
+  qrCodeData = qr;
+  
+  // Generate QR in console for local development
   qrcode.generate(qr, {small: true});
   console.log('Scan the QR code above to authenticate WhatsApp Web.');
+  console.log('---------------------------------------------');
+  console.log('If deployed, visit /qr endpoint to see the QR code in browser');
+  console.log('---------------------------------------------');
 });
 
 client.on('ready', () => {
+  qrCodeData = null; // Clear QR data when client is ready
   console.log('WhatsApp client is ready!');
 });
 
@@ -74,7 +85,62 @@ client.initialize();
 
 // API endpoints
 app.get('/', (req, res) => {
-  res.send('WhatsApp OTP Verification Service is running!');
+  if (qrCodeData) {
+    res.send(`
+      <html>
+        <head>
+          <title>WhatsApp OTP Verification Service</title>
+          <style>
+            body { font-family: Arial, sans-serif; text-align: center; margin: 50px; }
+            .container { max-width: 600px; margin: 0 auto; }
+            .qr-container { margin: 20px 0; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>WhatsApp OTP Verification Service</h1>
+            <p>Scan the QR code below to authenticate WhatsApp Web</p>
+            <div class="qr-container">
+              <img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrCodeData)}" alt="WhatsApp QR Code" />
+            </div>
+            <p>After scanning, refresh this page to verify authentication status.</p>
+          </div>
+        </body>
+      </html>
+    `);
+  } else {
+    res.send(`
+      <html>
+        <head>
+          <title>WhatsApp OTP Verification Service</title>
+          <style>
+            body { font-family: Arial, sans-serif; text-align: center; margin: 50px; }
+            .container { max-width: 600px; margin: 0 auto; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>WhatsApp OTP Verification Service</h1>
+            <p style="color: green;">✅ Service is running and WhatsApp is connected!</p>
+            <p>Use the API endpoints to send and verify OTPs.</p>
+          </div>
+        </body>
+      </html>
+    `);
+  }
+});
+
+// QR code endpoint
+app.get('/qr', (req, res) => {
+  if (qrCodeData) {
+    res.setHeader('Content-Type', 'image/png');
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrCodeData)}`;
+    
+    // Redirect to QR service
+    res.redirect(qrUrl);
+  } else {
+    res.status(404).send('No QR code available. WhatsApp client might be already authenticated.');
+  }
 });
 
 // Endpoint to send OTP

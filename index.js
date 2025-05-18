@@ -36,6 +36,9 @@ const client = new Client({
 // Store active OTPs
 const activeOTPs = new Map();
 
+// Track client state
+let clientReady = false;
+
 // Generate a random 6-digit OTP
 function generateOTP() {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -56,6 +59,7 @@ client.on('qr', (qr) => {
 
 client.on('ready', () => {
   qrCodeData = null; // Clear QR data when client is ready
+  clientReady = true;
   console.log('WhatsApp client is ready!');
 });
 
@@ -86,6 +90,7 @@ client.on('message', async (message) => {
 // Modify index.js to add reconnection logic
 client.on('disconnected', async (reason) => {
   console.log('WhatsApp client disconnected:', reason);
+  clientReady = false;
   console.log('Attempting to reconnect...');
   // Wait a bit before reinitializing
   setTimeout(() => {
@@ -129,13 +134,24 @@ app.get('/', (req, res) => {
           <style>
             body { font-family: Arial, sans-serif; text-align: center; margin: 50px; }
             .container { max-width: 600px; margin: 0 auto; }
+            .status { padding: 10px; border-radius: 5px; margin: 20px 0; }
+            .connected { background-color: #d4edda; color: #155724; }
+            .disconnected { background-color: #f8d7da; color: #721c24; }
           </style>
         </head>
         <body>
           <div class="container">
             <h1>WhatsApp OTP Verification Service</h1>
-            <p style="color: green;">✅ Service is running and WhatsApp is connected!</p>
-            <p>Use the API endpoints to send and verify OTPs.</p>
+            <div class="status ${clientReady ? 'connected' : 'disconnected'}">
+              <p>${clientReady ? 
+                '✅ Service is running and WhatsApp is connected!' : 
+                '❌ Service is running but WhatsApp is NOT connected!'}
+              </p>
+            </div>
+            ${!clientReady ? 
+              '<p>Please wait for the service to reconnect, or check the logs for errors.</p>' : 
+              '<p>Use the API endpoints to send and verify OTPs.</p>'}
+            <p><strong>Status Endpoint:</strong> <a href="/status">/status</a></p>
           </div>
         </body>
       </html>
@@ -165,6 +181,14 @@ app.post('/send-otp', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Phone number is required' });
     }
     
+    // Check if client is ready
+    if (!clientReady) {
+      return res.status(503).json({ 
+        success: false, 
+        message: 'WhatsApp service is not connected. Please check /status endpoint and try again later.' 
+      });
+    }
+    
     // Format phone number to WhatsApp format (with @c.us suffix)
     const formattedNumber = phoneNumber.includes('@c.us') 
       ? phoneNumber 
@@ -183,9 +207,27 @@ app.post('/send-otp', async (req, res) => {
       callbackUrl
     });
     
-    // Send OTP via WhatsApp
-    await client.sendMessage(formattedNumber, 
-      `Your verification code is: *${otp}*\n\nValid for 5 minutes. Do not share this code with anyone.`);
+    try {
+      // Send OTP via WhatsApp with retry logic
+      await client.sendMessage(formattedNumber, 
+        `Your verification code is: *${otp}*\n\nValid for 5 minutes. Do not share this code with anyone.`);
+    } catch (sendError) {
+      console.error('Send message error:', sendError);
+      
+      // If we get a session error, mark client as not ready
+      if (sendError.message.includes('Session closed')) {
+        clientReady = false;
+        client.initialize(); // Try to reconnect
+        
+        return res.status(503).json({
+          success: false,
+          message: 'WhatsApp service temporarily unavailable. Please try again in a few minutes.',
+          error: 'Session error'
+        });
+      }
+      
+      throw sendError; // Re-throw for the outer catch block
+    }
     
     // Set up expiration for this OTP
     setTimeout(() => {
@@ -254,6 +296,14 @@ app.post('/verify-otp', (req, res) => {
       error: error.message
     });
   }
+});
+
+// Health check endpoint
+app.get('/status', (req, res) => {
+  res.json({
+    clientReady: clientReady,
+    qrAvailable: qrCodeData !== null
+  });
 });
 
 // Start server

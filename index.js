@@ -24,7 +24,10 @@ const client = new Client({
       '--no-first-run',
       '--no-zygote',
       '--single-process',
-      '--disable-gpu'
+      '--disable-gpu',
+      '--disable-extensions',
+      '--disable-software-rasterizer',
+      '--js-flags="--max-old-space-size=128"'  // Limit Chrome memory usage
     ],
     headless: true,
   }
@@ -78,6 +81,16 @@ client.on('message', async (message) => {
       await message.reply('❌ Invalid OTP. Please try again.');
     }
   }
+});
+
+// Modify index.js to add reconnection logic
+client.on('disconnected', async (reason) => {
+  console.log('WhatsApp client disconnected:', reason);
+  console.log('Attempting to reconnect...');
+  // Wait a bit before reinitializing
+  setTimeout(() => {
+    client.initialize();
+  }, 3000);
 });
 
 // Initialize the WhatsApp client

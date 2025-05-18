@@ -54,7 +54,6 @@ const client = new Client({
       '--disable-background-networking'
     ],
     headless: true,
-    userDataDir: '/tmp/puppeteer-data', // Use tmp directory instead of default
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH, // Use custom Chromium if available
   }
 });

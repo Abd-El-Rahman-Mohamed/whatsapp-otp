@@ -46,8 +46,7 @@ Send a POST request to `/send-otp` with the following JSON payload:
 
 ```json
 {
-  "phoneNumber": "1234567890",
-  "callbackUrl": "https://your-service.com/verify-callback" // Optional
+  "phoneNumber": "1234567890"
 }
 ```
 

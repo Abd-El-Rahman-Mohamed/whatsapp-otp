@@ -98,16 +98,6 @@ client.on('message', async (message) => {
     if (message.body === otpData.otp) {
       await message.reply('✅ OTP verified successfully!');
       
-      // Notify the requesting service about verification
-      if (otpData.callbackUrl) {
-        try {
-          // In a real app, you would make an HTTP request to the callback URL
-          console.log(`OTP verified for ${message.from}, notifying: ${otpData.callbackUrl}`);
-        } catch (error) {
-          console.error('Error notifying service:', error);
-        }
-      }
-      
       // Remove the OTP from active list
       activeOTPs.delete(message.from);
     } else {
@@ -279,7 +269,7 @@ app.get('/qr', (req, res) => {
 // Endpoint to send OTP
 app.post('/send-otp', async (req, res) => {
   try {
-    const { phoneNumber, callbackUrl } = req.body;
+    const { phoneNumber } = req.body;
     
     if (!phoneNumber) {
       return res.status(400).json({ success: false, message: 'Phone number is required' });
@@ -299,8 +289,7 @@ app.post('/send-otp', async (req, res) => {
     
     activeOTPs.set(formattedNumber, {
       otp,
-      expiry: expiryTime,
-      callbackUrl
+      expiry: expiryTime
     });
 
     // Maximum retry attempts

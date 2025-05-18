@@ -1,13 +1,29 @@
 const { Client, LocalAuth, RemoteAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const express = require('express');
+const compression = require('compression');
 const crypto = require('crypto');
 const fs = require('fs');
 require('dotenv').config();
 
+// Log memory usage to help with debugging
+function logMemoryUsage() {
+  const used = process.memoryUsage();
+  const messages = [];
+  for (let key in used) {
+    messages.push(`${key}: ${Math.round(used[key] / 1024 / 1024 * 100) / 100} MB`);
+  }
+  console.log('MEMORY USAGE:', messages.join(', '));
+}
+
+// Log memory usage every 5 minutes
+setInterval(logMemoryUsage, 5 * 60 * 1000);
+logMemoryUsage(); // Log at startup
+
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(compression()); // Add compression for all responses
+app.use(express.json({ limit: '1mb' })); // Limit request size
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // QR Code storage
 let qrCodeData = null;
@@ -29,9 +45,17 @@ const client = new Client({
       '--disable-gpu',
       '--disable-extensions',
       '--disable-software-rasterizer',
-      '--js-flags="--max-old-space-size=128"'  // Limit Chrome memory usage
+      '--js-flags="--max-old-space-size=128"',  // Limit Chrome memory usage
+      '--disable-features=AudioServiceOutOfProcess',
+      '--disable-component-extensions-with-background-pages',
+      '--disable-default-apps',
+      '--mute-audio',
+      '--js-flags="--max_old_space_size=128 --expose-gc"',
+      '--disable-background-networking'
     ],
     headless: true,
+    userDataDir: '/tmp/puppeteer-data', // Use tmp directory instead of default
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH, // Use custom Chromium if available
   }
 });
 
@@ -114,7 +138,7 @@ function scheduleRestart() {
     clearTimeout(restartTimeout);
   }
   
-  // Schedule restart every 6 hours
+  // Schedule restart every 2 hours (reduced from 6 hours to prevent memory buildup)
   restartTimeout = setTimeout(async () => {
     console.log('Performing scheduled WhatsApp client restart...');
     
@@ -124,6 +148,16 @@ function scheduleRestart() {
       
       // Try to properly destroy the client if possible
       await client.destroy().catch(err => console.log('Error during destroy:', err));
+      
+      // Run garbage collection if exposed
+      if (global.gc) {
+        try {
+          global.gc();
+          console.log('Manual garbage collection executed');
+        } catch (e) {
+          console.error('Error during manual GC:', e);
+        }
+      }
       
       // Small delay before reinitializing
       setTimeout(() => {
@@ -135,8 +169,39 @@ function scheduleRestart() {
       // Try to initialize anyway
       client.initialize();
     }
-  }, 6 * 60 * 60 * 1000); // 6 hours
+  }, 2 * 60 * 60 * 1000); // 2 hours
 }
+
+// Handle process termination signals
+async function handleTermination() {
+  console.log('Received termination signal, cleaning up...');
+  
+  try {
+    // Clear all timeouts
+    if (restartTimeout) {
+      clearTimeout(restartTimeout);
+    }
+    
+    // Destroy client properly
+    if (client) {
+      await client.destroy().catch(e => console.log('Error destroying client:', e));
+    }
+    
+    console.log('Cleanup complete, exiting gracefully');
+    process.exit(0);
+  } catch (err) {
+    console.error('Error during cleanup:', err);
+    process.exit(1);
+  }
+}
+
+// Listen for termination signals
+process.on('SIGTERM', handleTermination);
+process.on('SIGINT', handleTermination);
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+  handleTermination();
+});
 
 // Call this after client initialization
 scheduleRestart();

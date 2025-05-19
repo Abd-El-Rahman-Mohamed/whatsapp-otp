@@ -46,7 +46,7 @@ Send a POST request to `/send-otp` with the following JSON payload:
 
 ```json
 {
-  "phoneNumber": "1234567890"
+  "phoneNumber": "201234567890" # 20 if for Egyptian number prefix
 }
 ```
 
@@ -62,7 +62,7 @@ OTPs can be verified in two ways:
 
 ```json
 {
-  "phoneNumber": "1234567890",
+  "phoneNumber": "201234567890",
   "otp": "123456"
 }
 ```
